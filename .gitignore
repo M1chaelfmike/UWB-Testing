@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+# Local test output
+*.csv
+*.log
+
+# Local vendor tools / archives
+*.exe
+*.zip
+*.ini
+*.pptx
+
+# Old scratch copy with garbled comments; use Estimote_tag.js instead.
+Estimote tag.js
