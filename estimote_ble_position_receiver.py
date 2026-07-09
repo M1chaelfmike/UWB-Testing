@@ -29,6 +29,7 @@ import math
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -112,6 +113,14 @@ def prepare_windows_ble_thread(allow_gui_sta: bool) -> None:
             allow_sta()
         except Exception as exc:
             print(f"[warn] could not allow Windows STA mode for Bleak: {exc}")
+
+
+def capture_timestamp() -> datetime:
+    return datetime.now().astimezone()
+
+
+def format_local_time(timestamp: datetime) -> str:
+    return timestamp.strftime("%H:%M:%S.%f")[:-3]
 
 
 def parse_anchor(raw: Dict[str, object], index: int) -> Anchor:
@@ -474,30 +483,35 @@ def print_frame(
     source: str,
     print_raw: bool,
     min_valid_anchors: int = 3,
+    timestamp: Optional[datetime] = None,
 ) -> Optional[Tuple[float, float]]:
+    if timestamp is None:
+        timestamp = capture_timestamp()
+
+    time_prefix = f"[{format_local_time(timestamp)}]"
     solved = solve_position(frame, config, min_valid_anchors)
     status = "paused" if frame.paused else "running"
     print(
-        f"[ble] {source} adv={frame.seq:03d} {status} "
+        f"{time_prefix} [ble] {source} adv={frame.seq:03d} {status} "
         f"valid={frame.valid_count}/{ANCHOR_COUNT} battery={frame.battery}% "
         f"{format_ranges(frame, config)} {format_diagnostics(frame, config)}"
     )
 
     if solved is None:
-        print(f"[position] waiting for enough valid anchors ({frame.valid_count}/{min_valid_anchors})")
+        print(f"{time_prefix} [position] waiting for enough valid anchors ({frame.valid_count}/{min_valid_anchors})")
         if print_raw:
-            print(f"[raw] {frame.raw_hex}")
+            print(f"{time_prefix} [raw] {frame.raw_hex}")
         return None
 
     x, y, z, residual, used_ranges = solved
     used_names = ",".join(anchor.name for anchor, _ in used_ranges)
     print(
-        f"[position] x={x:.3f}, y={y:.3f}, z={z:.3f}, "
+        f"{time_prefix} [position] x={x:.3f}, y={y:.3f}, z={z:.3f}, "
         f"residual={residual:.3f}m, used={used_names}"
     )
 
     if print_raw:
-        print(f"[raw] {frame.raw_hex}")
+        print(f"{time_prefix} [raw] {frame.raw_hex}")
 
     return x, y
 
@@ -574,6 +588,7 @@ async def scan_ble(args: argparse.Namespace, config: ReceiverConfig) -> None:
             if frame is None:
                 continue
 
+            timestamp = capture_timestamp()
             source_key = str(source)
             if last_seq_by_source.get(source_key) == frame.seq:
                 return
@@ -607,7 +622,7 @@ async def scan_ble(args: argparse.Namespace, config: ReceiverConfig) -> None:
             if name:
                 source_label += " " + name
 
-            print_frame(frame, config, source_label, args.print_raw, args.min_valid_anchors)
+            print_frame(frame, config, source_label, args.print_raw, args.min_valid_anchors, timestamp)
 
     print(f"Scanning BLE Service Data UUID {config.service_uuid}. Press Ctrl+C to stop.")
     async with BleakScanner(callback):

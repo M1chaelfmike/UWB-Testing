@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import csv
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -49,6 +50,18 @@ def default_csv_path() -> Path:
     return Path(f"estimote_ble_diag_{stamp}.csv")
 
 
+def capture_timestamp() -> datetime:
+    return datetime.now().astimezone()
+
+
+def format_iso_timestamp(timestamp: datetime) -> str:
+    return timestamp.isoformat(timespec="milliseconds")
+
+
+def format_local_time(timestamp: datetime) -> str:
+    return timestamp.strftime("%H:%M:%S.%f")[:-3]
+
+
 async def scan(args: argparse.Namespace) -> None:
     try:
         from bleak import BleakScanner
@@ -65,6 +78,8 @@ async def scan(args: argparse.Namespace) -> None:
     rows = 0
 
     fieldnames = [
+        "timestamp_iso",
+        "local_time",
         "elapsed_s",
         "source",
         "name",
@@ -115,9 +130,12 @@ async def scan(args: argparse.Namespace) -> None:
                 return
             last_adv_by_source[source] = frame.seq
 
+            timestamp = capture_timestamp()
             elapsed = time.monotonic() - start
             solved = solve_position(frame, config, args.min_valid_anchors)
             row = {
+                "timestamp_iso": format_iso_timestamp(timestamp),
+                "local_time": format_local_time(timestamp),
                 "elapsed_s": f"{elapsed:.3f}",
                 "source": source,
                 "name": name,
@@ -167,7 +185,8 @@ async def scan(args: argparse.Namespace) -> None:
                 )
                 sync = "--" if frame.sync_seq is None or frame.sync_seq == 0 else f"{frame.sync_seq:03d}"
                 print(
-                    f"{elapsed:7.2f}s adv={frame.seq:03d} d={row['adv_delta'] or '--':>3} "
+                    f"[{row['local_time']}] {elapsed:7.2f}s "
+                    f"adv={frame.seq:03d} d={row['adv_delta'] or '--':>3} "
                     f"sync={sync} span={row['sync_span_s'] or '--'} valid={frame.valid_count}/4 "
                     f"ages {ages}"
                 )
