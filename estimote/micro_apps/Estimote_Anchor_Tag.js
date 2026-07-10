@@ -5,7 +5,9 @@ var UWB_MODE = uwb.Mode.HIGH_RESPONSIVNESS;
 var UWB_MIN_DISTANCE = 0.1;
 var UWB_MAX_DISTANCE = 10;
 var LED_BRIGHTNESS = 1.0;
-var LED_REQUEST_HOLD_MS = "45ms";
+// Remain green for one second after the latest Tag request. This makes the
+// LED a readable link-status indicator instead of a short visible flash.
+var LED_REQUEST_HOLD_MS = "1000ms";
 var STATS_TIMER = "10s";
 var STATS_INTERVAL_SEC = 10;
 var SAMPLE_PRINT_INTERVAL_SEC = 1;
