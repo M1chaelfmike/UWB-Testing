@@ -5,9 +5,7 @@ var UWB_MODE = uwb.Mode.HIGH_RESPONSIVNESS;
 var UWB_MIN_DISTANCE = 0.1;
 var UWB_MAX_DISTANCE = 10;
 var LED_BRIGHTNESS = 1.0;
-var LED_FLASH_ON_MS = "45ms";
-var LED_FLASH_OFF_MS = "45ms";
-var MAX_PENDING_FLASHES = 8;
+var LED_REQUEST_HOLD_MS = "45ms";
 var STATS_TIMER = "10s";
 var STATS_INTERVAL_SEC = 10;
 var SAMPLE_PRINT_INTERVAL_SEC = 1;
@@ -16,8 +14,7 @@ var PRINT_RAW_TAG_MESSAGE = false;
 var uwbStarted = false;
 var uwbPaused = false;
 var stoppingApp = false;
-var flashing = false;
-var pendingFlashes = 0;
+var dataStateVersion = 0;
 var lastSamplePrintTime = 0;
 var statsWindowStartedAt = 0;
 var totalTagCallbacks = 0;
@@ -66,40 +63,16 @@ function pulseDataState() {
     return;
   }
 
-  if (pendingFlashes < MAX_PENDING_FLASHES) {
-    pendingFlashes += 1;
-  }
-
-  runFlashQueue();
-}
-
-function runFlashQueue() {
-  if (flashing || pendingFlashes <= 0 || uwbPaused || stoppingApp) {
-    return;
-  }
-
-  flashing = true;
-  pendingFlashes -= 1;
-
+  // A Tag request means the link is active. Keep the LED green until no new
+  // request has arrived for LED_REQUEST_HOLD_MS, then return to red.
+  dataStateVersion += 1;
+  var requestVersion = dataStateVersion;
   setSolid(io.Color.GREEN);
 
-  timers.single(LED_FLASH_ON_MS, function () {
-    if (uwbPaused || stoppingApp) {
-      flashing = false;
-      return;
+  timers.single(LED_REQUEST_HOLD_MS, function () {
+    if (!uwbPaused && !stoppingApp && requestVersion === dataStateVersion) {
+      setNoDataState();
     }
-
-    setNoDataState();
-
-    timers.single(LED_FLASH_OFF_MS, function () {
-      flashing = false;
-
-      if (pendingFlashes > 0) {
-        runFlashQueue();
-      } else {
-        setNoDataState();
-      }
-    });
   });
 }
 
