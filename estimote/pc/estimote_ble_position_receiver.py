@@ -1,20 +1,13 @@
 """
 Estimote UWB-over-BLE receiver and live position estimator.
 
-The Estimote tag micro-app broadcasts Service Data FE9A with this payload:
-  byte 0      magic = 0xEC
-  byte 1      version = 0x02
-  byte 2      sequence
-  byte 3      flags, bit0-bit3 = anchor A-D valid, bit4 = paused
-  byte 4-11   four uint16 little-endian ranges in centimeters
-  byte 12-15  four LQI bytes, value 255 means unknown
-  byte 16     battery percent
-  byte 17     valid anchor count
+The Estimote tag broadcasts BLE Service Data FE9A. Payload v3 includes
+anchor codes in the packet, so slot order no longer has to match config order.
 
-Usage:
-  python estimote_ble_position_receiver.py --config estimote_anchor_config.json
-  python estimote_ble_position_receiver.py --config estimote_anchor_config.json --plot
-  python estimote_ble_position_receiver.py --sample ec02010f7b00f5002c01c801505a463c5f04
+Usage from the repository root:
+  python estimote/pc/estimote_ble_position_receiver.py
+  python estimote/pc/estimote_ble_position_receiver.py --plot
+  python estimote/pc/estimote_ble_position_receiver.py --sample ec03010f575579567800d2005f0054015b042a0000000001
 
 Install dependency for live BLE scanning:
   python -m pip install bleak
@@ -35,11 +28,21 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 PAYLOAD_MAGIC = 0xEC
-PAYLOAD_VERSION = 0x02
+PAYLOAD_VERSION_V2 = 0x02
+PAYLOAD_VERSION_V3 = 0x03
 ANCHOR_COUNT = 4
 INVALID_DISTANCE_CM = 65535
 INVALID_LQI = 255
-DEFAULT_CONFIG = "estimote_anchor_config.json"
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG = str(SCRIPT_DIR / "estimote_anchor_config.json")
+ANCHOR_CODE_LABELS = {
+    121: "121",
+    99: "099",
+    85: "085",
+    87: "087",
+    86: "086",
+    105: "105",
+}
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,7 @@ class ReceiverConfig:
 class BleRangeFrame:
     seq: int
     flags: int
+    anchor_codes: List[Optional[int]]
     distances_m: List[Optional[float]]
     lqi: List[Optional[float]]
     battery: int
@@ -92,6 +96,48 @@ def service_uuid_matches(actual: str, expected: str) -> bool:
         return expected_norm == "0000" + actual_norm + "00001000800000805f9b34fb"
 
     return False
+
+
+def normalize_anchor_label(value: object) -> str:
+    text = str(value).strip().lower()
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def anchor_label_from_code(code: Optional[int]) -> str:
+    if code is None:
+        return ""
+    return ANCHOR_CODE_LABELS.get(code, str(code))
+
+
+def anchor_for_slot(
+    frame: BleRangeFrame,
+    anchors: Sequence[Anchor],
+    index: int,
+) -> Optional[Anchor]:
+    if index < len(frame.anchor_codes):
+        code = frame.anchor_codes[index]
+        if code is not None:
+            code_key = normalize_anchor_label(anchor_label_from_code(code))
+            for anchor in anchors:
+                if normalize_anchor_label(anchor.name) == code_key:
+                    return anchor
+            return None
+
+    if index < len(anchors):
+        return anchors[index]
+
+    return None
+
+
+def frame_slot_label(frame: BleRangeFrame, anchors: Sequence[Anchor], index: int) -> str:
+    anchor = anchor_for_slot(frame, anchors, index)
+    if anchor is not None:
+        return anchor.name
+
+    code = frame.anchor_codes[index] if index < len(frame.anchor_codes) else None
+    return anchor_label_from_code(code) or f"ID{index + 1}"
 
 
 def prepare_windows_ble_thread(allow_gui_sta: bool) -> None:
@@ -160,6 +206,15 @@ def load_config(path: Path) -> ReceiverConfig:
     )
 
 
+def with_config_overrides(config: ReceiverConfig, mode: str = "", tag_z: Optional[float] = None) -> ReceiverConfig:
+    return ReceiverConfig(
+        service_uuid=config.service_uuid,
+        mode=mode or config.mode,
+        tag_z=config.tag_z if tag_z is None else tag_z,
+        anchors=config.anchors,
+    )
+
+
 def read_uint16_le(data: bytes, offset: int) -> int:
     return data[offset] | (data[offset + 1] << 8)
 
@@ -167,27 +222,39 @@ def read_uint16_le(data: bytes, offset: int) -> int:
 def decode_payload(data: bytes) -> Optional[BleRangeFrame]:
     if len(data) < 18:
         return None
-    if data[0] != PAYLOAD_MAGIC or data[1] != PAYLOAD_VERSION:
+    if data[0] != PAYLOAD_MAGIC or data[1] not in {PAYLOAD_VERSION_V2, PAYLOAD_VERSION_V3}:
+        return None
+    if data[1] == PAYLOAD_VERSION_V3 and len(data) < 24:
         return None
 
     seq = data[2]
     flags = data[3]
+    version = data[1]
+    distance_offset = 4
+    anchor_codes: List[Optional[int]] = [None] * ANCHOR_COUNT
     distances_m: List[Optional[float]] = []
     lqi: List[Optional[float]] = []
 
+    if version == PAYLOAD_VERSION_V3:
+        distance_offset = 8
+        anchor_codes = [data[4 + index] or None for index in range(ANCHOR_COUNT)]
+
     for index in range(ANCHOR_COUNT):
-        cm = read_uint16_le(data, 4 + index * 2)
+        cm = read_uint16_le(data, distance_offset + index * 2)
         if cm == INVALID_DISTANCE_CM:
             distances_m.append(None)
         else:
             distances_m.append(cm / 100.0)
 
     for index in range(ANCHOR_COUNT):
-        value = data[12 + index]
-        if value == INVALID_LQI:
-            lqi.append(None)
+        if version == PAYLOAD_VERSION_V2:
+            value = data[12 + index]
+            if value == INVALID_LQI:
+                lqi.append(None)
+            else:
+                lqi.append(value / 100.0)
         else:
-            lqi.append(value / 100.0)
+            lqi.append(None)
 
     sync_seq: Optional[int] = None
     ages_s: List[Optional[float]] = [None] * ANCHOR_COUNT
@@ -209,6 +276,7 @@ def decode_payload(data: bytes) -> Optional[BleRangeFrame]:
     return BleRangeFrame(
         seq=seq,
         flags=flags,
+        anchor_codes=anchor_codes,
         distances_m=distances_m,
         lqi=lqi,
         battery=data[16],
@@ -228,11 +296,12 @@ def valid_anchor_ranges(
     ranges: List[Tuple[Anchor, float]] = []
 
     for index, distance in enumerate(frame.distances_m):
-        if index >= len(anchors) or distance is None:
+        anchor = anchor_for_slot(frame, anchors, index)
+        if anchor is None or distance is None:
             continue
         if not (frame.flags & (1 << index)):
             continue
-        ranges.append((anchors[index], distance))
+        ranges.append((anchor, distance))
 
     return ranges
 
@@ -450,13 +519,14 @@ def solve_position(
 
 def format_ranges(frame: BleRangeFrame, config: ReceiverConfig) -> str:
     parts: List[str] = []
-    for index, anchor in enumerate(config.anchors):
+    for index in range(ANCHOR_COUNT):
+        anchor_name = frame_slot_label(frame, config.anchors, index)
         distance = frame.distances_m[index]
         flag_ok = bool(frame.flags & (1 << index))
         if distance is None or not flag_ok:
-            parts.append(f"{anchor.name}=--")
+            parts.append(f"{anchor_name}=--")
         else:
-            parts.append(f"{anchor.name}={distance:.2f}m")
+            parts.append(f"{anchor_name}={distance:.2f}m")
     return ", ".join(parts)
 
 
@@ -465,12 +535,13 @@ def format_diagnostics(frame: BleRangeFrame, config: ReceiverConfig) -> str:
         return ""
 
     age_parts: List[str] = []
-    for index, anchor in enumerate(config.anchors):
+    for index in range(ANCHOR_COUNT):
+        anchor_name = frame_slot_label(frame, config.anchors, index)
         age = frame.ages_s[index] if index < len(frame.ages_s) else None
         if age is None:
-            age_parts.append(f"{anchor.name}=--")
+            age_parts.append(f"{anchor_name}=--")
         else:
-            age_parts.append(f"{anchor.name}={age:.1f}s")
+            age_parts.append(f"{anchor_name}={age:.1f}s")
 
     sync_label = "--" if frame.sync_seq == 0 else f"{frame.sync_seq:03d}"
     span_label = "--" if frame.sync_span_s is None else f"{frame.sync_span_s:.1f}s"
@@ -561,6 +632,26 @@ class LivePlot:
         self.plt.pause(0.001)
 
 
+def should_update_plot(
+    source_key: str,
+    sync_seq: Optional[int],
+    now: float,
+    interval: float,
+    last_plot_at_by_source: Dict[str, float],
+    last_plot_sync_seq_by_source: Dict[str, int],
+) -> bool:
+    if sync_seq is not None and sync_seq != 0 and last_plot_sync_seq_by_source.get(source_key) == sync_seq:
+        return False
+
+    if interval > 0 and now - last_plot_at_by_source.get(source_key, 0.0) < interval:
+        return False
+
+    last_plot_at_by_source[source_key] = now
+    if sync_seq is not None and sync_seq != 0:
+        last_plot_sync_seq_by_source[source_key] = sync_seq
+    return True
+
+
 async def scan_ble(args: argparse.Namespace, config: ReceiverConfig) -> None:
     try:
         from bleak import BleakScanner
@@ -569,7 +660,6 @@ async def scan_ble(args: argparse.Namespace, config: ReceiverConfig) -> None:
 
     prepare_windows_ble_thread(allow_gui_sta=args.plot)
     plot = LivePlot(config.anchors) if args.plot else None
-    prepare_windows_ble_thread(allow_gui_sta=args.plot)
     last_print_at_by_source: Dict[str, float] = {}
     last_plot_at_by_source: Dict[str, float] = {}
     last_seq_by_source: Dict[str, int] = {}
@@ -599,20 +689,16 @@ async def scan_ble(args: argparse.Namespace, config: ReceiverConfig) -> None:
                 solved = solve_position(frame, config, args.min_valid_anchors)
                 if solved is not None:
                     sync_seq = frame.sync_seq
-                    already_plotted = (
-                        sync_seq is not None
-                        and sync_seq != 0
-                        and last_plot_sync_seq_by_source.get(source_key) == sync_seq
-                    )
-                    if not already_plotted and (
-                        args.plot_interval <= 0
-                        or now - last_plot_at_by_source.get(source_key, 0.0) >= args.plot_interval
+                    if should_update_plot(
+                        source_key,
+                        sync_seq,
+                        now,
+                        args.plot_interval,
+                        last_plot_at_by_source,
+                        last_plot_sync_seq_by_source,
                     ):
                         x, y, _z, _residual, _used_ranges = solved
                         plot.update(x, y)
-                        last_plot_at_by_source[source_key] = now
-                        if sync_seq is not None and sync_seq != 0:
-                            last_plot_sync_seq_by_source[source_key] = sync_seq
 
             if now - last_print_at_by_source.get(source_key, 0.0) < args.print_interval:
                 return
@@ -652,30 +738,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--print-raw", action="store_true", help="Print raw FE9A payload hex.")
     parser.add_argument("--print-interval", type=float, default=0.1, help="Minimum seconds between printed frames per tag.")
     parser.add_argument("--plot-interval", type=float, default=0.0, help="Minimum seconds between plotted frames per tag. Default: every solved BLE frame.")
-    parser.add_argument("--min-valid-anchors", type=int, default=4, choices=[3, 4], help="Minimum valid anchors required for position output. Default: 4.")
+    parser.add_argument("--min-valid-anchors", type=int, default=3, choices=[3, 4], help="Minimum valid anchors required for position output. Default: 3.")
     parser.add_argument("--sample", default="", help="Decode one payload hex string and exit.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    config = load_config(Path(args.config))
-
-    if args.mode:
-        config = ReceiverConfig(
-            service_uuid=config.service_uuid,
-            mode=args.mode,
-            tag_z=config.tag_z,
-            anchors=config.anchors,
-        )
-
-    if args.tag_z is not None:
-        config = ReceiverConfig(
-            service_uuid=config.service_uuid,
-            mode=config.mode,
-            tag_z=args.tag_z,
-            anchors=config.anchors,
-        )
+    config = with_config_overrides(load_config(Path(args.config)), args.mode, args.tag_z)
 
     if args.sample:
         run_sample(args, config)

@@ -10,6 +10,13 @@ __pycache__/
 *.zip
 *.ini
 *.pptx
+*.apk
+*.aab
 
 # Old scratch copy with garbled comments; use Estimote_tag.js instead.
 Estimote tag.js
+
+# Android local build output
+.gradle/
+**/build/
+local.properties

@@ -6,9 +6,9 @@ This records every new BLE advertisement sequence to CSV so we can separate:
   - UWB anchor gaps: one anchor age grows while adv keeps moving
   - sync-frame gaps: sync_seq stops changing or sync_span is too large
 
-Example:
-  python estimote_ble_diagnostic_logger.py --config estimote_anchor_config.json --duration 60
-  python estimote_ble_diagnostic_logger.py --config estimote_anchor_config.json --csv run1.csv
+Example from the repository root:
+  python estimote/pc/estimote_ble_diagnostic_logger.py --duration 60
+  python estimote/pc/estimote_ble_diagnostic_logger.py --csv run1.csv
 """
 
 from __future__ import annotations
@@ -23,6 +23,9 @@ from typing import Dict, Optional
 
 from estimote_ble_position_receiver import (
     ANCHOR_COUNT,
+    DEFAULT_CONFIG,
+    anchor_for_slot,
+    anchor_label_from_code,
     decode_payload,
     load_config,
     prepare_windows_ble_thread,
@@ -47,7 +50,9 @@ def fmt_optional(value: object) -> str:
 
 def default_csv_path() -> Path:
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    return Path(f"estimote_ble_diag_{stamp}.csv")
+    output_dir = Path(__file__).resolve().parent / "logs"
+    output_dir.mkdir(exist_ok=True)
+    return output_dir / f"estimote_ble_diag_{stamp}.csv"
 
 
 def capture_timestamp() -> datetime:
@@ -169,7 +174,16 @@ async def scan(args: argparse.Namespace) -> None:
                 row["residual"] = ""
                 row["used"] = ""
 
-            for index, anchor in enumerate(config.anchors):
+            for anchor in config.anchors:
+                row[f"d_{anchor.name}_m"] = ""
+                row[f"age_{anchor.name}_s"] = ""
+                row[f"lqi_{anchor.name}"] = ""
+
+            for index in range(ANCHOR_COUNT):
+                anchor = anchor_for_slot(frame, config.anchors, index)
+                if anchor is None:
+                    continue
+
                 row[f"d_{anchor.name}_m"] = fmt_optional(frame.distances_m[index])
                 age = frame.ages_s[index] if index < len(frame.ages_s) else None
                 row[f"age_{anchor.name}_s"] = fmt_optional(age)
@@ -180,7 +194,8 @@ async def scan(args: argparse.Namespace) -> None:
 
             if args.print_rows:
                 ages = " ".join(
-                    f"{config.anchors[index].name}:{fmt_optional(frame.ages_s[index] if index < len(frame.ages_s) else None) or '--'}"
+                    f"{(anchor_for_slot(frame, config.anchors, index).name if anchor_for_slot(frame, config.anchors, index) else anchor_label_from_code(frame.anchor_codes[index] if index < len(frame.anchor_codes) else None) or 'ID' + str(index + 1))}:"
+                    f"{fmt_optional(frame.ages_s[index] if index < len(frame.ages_s) else None) or '--'}"
                     for index in range(ANCHOR_COUNT)
                 )
                 sync = "--" if frame.sync_seq is None or frame.sync_seq == 0 else f"{frame.sync_seq:03d}"
@@ -210,7 +225,7 @@ async def scan(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Log Estimote UWB BLE diagnostic frames to CSV.")
-    parser.add_argument("--config", default="estimote_anchor_config.json")
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--csv", default="", help="Output CSV path. Default: timestamped file.")
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds to scan. Use 0 for until Ctrl+C.")
     parser.add_argument("--min-valid-anchors", type=int, default=4, choices=[3, 4])

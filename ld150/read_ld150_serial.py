@@ -2,8 +2,8 @@
 Simple LD150 / HR-RTLS1 serial reader.
 
 Usage:
-  python read_ld150_serial.py --list-ports
-  python read_ld150_serial.py --port COM7
+  python ld150/read_ld150_serial.py --list-ports
+  python ld150/read_ld150_serial.py --port COM7
 
 The script prints every raw serial line. When it sees an LD150 "mc" ranging
 frame, it also decodes the A0-A3 distances from hex millimeters to meters.
@@ -213,7 +213,7 @@ def main() -> None:
         return
 
     if not args.port:
-        raise SystemExit("Missing --port. Example: python read_ld150_serial.py --port COM7")
+        raise SystemExit("Missing --port. Example: python ld150/read_ld150_serial.py --port COM7")
 
     try:
         read_serial(args.port, args.baud, args.timeout)

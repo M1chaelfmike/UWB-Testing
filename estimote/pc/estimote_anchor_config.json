@@ -1,0 +1,73 @@
+{
+  "service_uuid": "FE9A",
+  "mode": "2d",
+  "tag_z": 0.9,
+  "known_nodes": [
+    {
+      "name": "121",
+      "code": 121,
+      "id": "3c672ac91dc36b1a367de39a7b257c09",
+      "active_anchor": true
+    },
+    {
+      "name": "099",
+      "code": 99,
+      "id": "cfe653965453ca7128b5fc6e4ed05626",
+      "active_anchor": false
+    },
+    {
+      "name": "085",
+      "code": 85,
+      "id": "92f64d9faf64fec41a1a0f6190869c1a",
+      "active_anchor": true
+    },
+    {
+      "name": "087",
+      "code": 87,
+      "id": "dc511fe398f7f537a918ce57351b9805",
+      "active_anchor": true
+    },
+    {
+      "name": "086",
+      "code": 86,
+      "id": "636fae02e5ff550528483915213d960e",
+      "active_anchor": false
+    },
+    {
+      "name": "105",
+      "code": 105,
+      "id": "d395656b93be9272e4394ee5dfd2d520",
+      "active_anchor": true
+    }
+  ],
+  "anchors": [
+    {
+      "name": "85",
+      "id": "92f64d9faf64fec41a1a0f6190869c1a",
+      "x": 3.94,
+      "y": 1.75,
+      "z": 0.75
+    },
+    {
+      "name": "87",
+      "id": "dc511fe398f7f537a918ce57351b9805",
+      "x": 3.94,
+      "y": 0,
+      "z": 0.55
+    },
+    {
+      "name": "121",
+      "id": "3c672ac91dc36b1a367de39a7b257c09",
+      "x": 0,
+      "y": 0,
+      "z": 1.05
+    },
+    {
+      "name": "105",
+      "id": "d395656b93be9272e4394ee5dfd2d520",
+      "x": 0.0,
+      "y": 1.75,
+      "z": 1.05
+    }
+  ]
+}
