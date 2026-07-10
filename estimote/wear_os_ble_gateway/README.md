@@ -39,8 +39,7 @@ Troubleshooting:
 - `scan` does not increase: Bluetooth scanning is not delivering callbacks. Keep the app in the foreground, disable power saving, grant Nearby devices permission, and make sure Bluetooth is enabled.
 - Keep WebIDE disconnected during the real test; use it only to upload/start the Estimote app.
 
-If the PC address changes, update `SERVER_URL` in:
-
-```text
-app/src/main/java/com/evercare/estimoteweargateway/MainActivity.java
-```
+To change the PC address or port, tap **Server settings** in the watch app, enter
+the PC's IP address (or hostname) and the receiver port, then tap **Save**. The
+setting is retained after the app is restarted. The endpoint path remains
+`/estimote`.

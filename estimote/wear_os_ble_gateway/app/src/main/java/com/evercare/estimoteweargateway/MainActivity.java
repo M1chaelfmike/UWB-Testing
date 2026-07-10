@@ -2,6 +2,7 @@ package com.evercare.estimoteweargateway;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
@@ -11,6 +12,7 @@ import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,8 +23,10 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.text.InputType;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -43,7 +47,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
     private static final String TAG = "EstimoteWearGateway";
-    private static final String SERVER_URL = "http://192.168.0.2:8088/estimote";
+    private static final String DEFAULT_SERVER_HOST = "192.168.0.2";
+    private static final int DEFAULT_SERVER_PORT = 8088;
+    private static final String SERVER_PATH = "/estimote";
+    private static final String PREFERENCES_NAME = "gateway_settings";
+    private static final String PREFERENCE_SERVER_HOST = "server_host";
+    private static final String PREFERENCE_SERVER_PORT = "server_port";
     private static final ParcelUuid ESTIMOTE_SERVICE_UUID =
             ParcelUuid.fromString("0000fe9a-0000-1000-8000-00805f9b34fb");
     private static final int REQUEST_PERMISSIONS = 1001;
@@ -73,7 +82,10 @@ public class MainActivity extends Activity {
     private JSONObject pendingPostBody = null;
     private String lastSource = "";
     private int lastAdvSeq = -1;
+    private volatile String serverHost;
+    private volatile int serverPort;
     private TextView statusView;
+    private TextView serverView;
     private TextView detailView;
     private Button startButton;
     private Button stopButton;
@@ -100,7 +112,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log.i(TAG, "onCreate server=" + SERVER_URL);
+        loadServerSettings();
+        Log.i(TAG, "onCreate server=" + serverUrl());
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         buildUi();
         ensurePermissions();
@@ -125,11 +138,21 @@ public class MainActivity extends Activity {
         statusView.setGravity(Gravity.CENTER);
         statusView.setText("Estimote BLE Gateway");
 
+        serverView = new TextView(this);
+        serverView.setTextColor(0xFFB0BEC5);
+        serverView.setTextSize(12);
+        serverView.setGravity(Gravity.CENTER);
+        updateServerView();
+
+        Button serverSettingsButton = new Button(this);
+        serverSettingsButton.setText("Server settings");
+        serverSettingsButton.setOnClickListener(view -> showServerSettings());
+
         detailView = new TextView(this);
         detailView.setTextColor(0xFFB0BEC5);
         detailView.setTextSize(12);
         detailView.setGravity(Gravity.CENTER);
-        detailView.setText("Server: " + SERVER_URL);
+        detailView.setText("Ready to scan");
 
         startButton = new Button(this);
         startButton.setText("Start");
@@ -140,10 +163,103 @@ public class MainActivity extends Activity {
         stopButton.setOnClickListener(view -> stopScan());
 
         root.addView(statusView);
+        root.addView(serverView);
+        root.addView(serverSettingsButton);
         root.addView(detailView);
         root.addView(startButton);
         root.addView(stopButton);
         setContentView(root);
+    }
+
+    private void loadServerSettings() {
+        SharedPreferences preferences = getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE);
+        serverHost = preferences.getString(PREFERENCE_SERVER_HOST, DEFAULT_SERVER_HOST);
+        serverPort = preferences.getInt(PREFERENCE_SERVER_PORT, DEFAULT_SERVER_PORT);
+        if (!isValidHost(serverHost) || !isValidPort(serverPort)) {
+            serverHost = DEFAULT_SERVER_HOST;
+            serverPort = DEFAULT_SERVER_PORT;
+        }
+    }
+
+    private void showServerSettings() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        int padding = 24;
+        form.setPadding(padding, padding, padding, padding);
+
+        TextView hostLabel = new TextView(this);
+        hostLabel.setText("PC IP address or hostname");
+        EditText hostInput = new EditText(this);
+        hostInput.setSingleLine(true);
+        hostInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        hostInput.setText(serverHost);
+
+        TextView portLabel = new TextView(this);
+        portLabel.setText("Port");
+        EditText portInput = new EditText(this);
+        portInput.setSingleLine(true);
+        portInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        portInput.setText(String.valueOf(serverPort));
+
+        form.addView(hostLabel);
+        form.addView(hostInput);
+        form.addView(portLabel);
+        form.addView(portInput);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Server settings")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(view -> {
+                    String host = hostInput.getText().toString().trim();
+                    int port;
+                    try {
+                        port = Integer.parseInt(portInput.getText().toString().trim());
+                    } catch (NumberFormatException e) {
+                        portInput.setError("Enter a port from 1 to 65535");
+                        return;
+                    }
+                    if (!isValidHost(host)) {
+                        hostInput.setError("Enter an IP address or hostname");
+                        return;
+                    }
+                    if (!isValidPort(port)) {
+                        portInput.setError("Enter a port from 1 to 65535");
+                        return;
+                    }
+                    serverHost = host;
+                    serverPort = port;
+                    getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit()
+                            .putString(PREFERENCE_SERVER_HOST, host)
+                            .putInt(PREFERENCE_SERVER_PORT, port)
+                            .apply();
+                    Log.i(TAG, "server updated to " + serverUrl());
+                    updateServerView();
+                    dialog.dismiss();
+                }));
+        dialog.show();
+    }
+
+    private boolean isValidHost(String host) {
+        return host != null && !host.isEmpty() && !host.contains(":") && !host.contains("/")
+                && !host.contains(" ");
+    }
+
+    private boolean isValidPort(int port) {
+        return port >= 1 && port <= 65535;
+    }
+
+    private String serverUrl() {
+        return "http://" + serverHost + ":" + serverPort + SERVER_PATH;
+    }
+
+    private void updateServerView() {
+        if (serverView != null) {
+            serverView.setText("Server: " + serverUrl());
+        }
     }
 
     private void ensurePermissions() {
@@ -455,7 +571,7 @@ public class MainActivity extends Activity {
         HttpURLConnection connection = null;
         try {
             byte[] data = body.toString().getBytes(StandardCharsets.UTF_8);
-            URL url = new URL(SERVER_URL);
+            URL url = new URL(serverUrl());
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(HTTP_TIMEOUT_MS);
