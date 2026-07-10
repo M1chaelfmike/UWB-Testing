@@ -20,3 +20,4 @@ Estimote tag.js
 .gradle/
 **/build/
 local.properties
+.idea/
