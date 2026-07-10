@@ -25,6 +25,7 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.text.InputType;
 
@@ -127,6 +128,9 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi() {
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.setFillViewport(true);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -165,10 +169,11 @@ public class MainActivity extends Activity {
         root.addView(statusView);
         root.addView(serverView);
         root.addView(serverSettingsButton);
-        root.addView(detailView);
         root.addView(startButton);
         root.addView(stopButton);
-        setContentView(root);
+        root.addView(detailView);
+        scrollView.addView(root);
+        setContentView(scrollView);
     }
 
     private void loadServerSettings() {
